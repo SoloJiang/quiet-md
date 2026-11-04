@@ -278,6 +278,7 @@ impl Workspace {
                     let push_id = id.clone();
                     let append_id = id.clone();
                     let create_id = id.clone();
+                    let connected = crate::dingtalk::is_connected(&crate::dingtalk::oauth_store_path());
                     popover()
                         .id("dm-dingtalk-menu")
                         .occlude()
@@ -285,6 +286,11 @@ impl Workspace {
                         .px(px(5.))
                         .py(px(PAD))
                         .child(recorder())
+                        .child(if connected {
+                            sub_item("dm-dt-disconnect", crate::settings::text("断开钉钉账号")).on_click(cx.listener(|w, _, window, cx| w.dingtalk_disconnect(window, cx)))
+                        } else {
+                            sub_item("dm-dt-connect", crate::settings::text("连接钉钉账号")).on_click(cx.listener(|w, _, window, cx| w.dingtalk_connect(window, cx)))
+                        })
                         .child(sub_item("dm-dt-pull", crate::settings::text("拉取到本地")).on_click(cx.listener(|w, _, window, cx| w.dingtalk_pull(window, cx))))
                         .child(sub_item("dm-dt-push", crate::settings::text("推送（覆写）")).on_click(cx.listener(move |w, _, window, cx| w.dingtalk_push(&push_id, false, window, cx))))
                         .child(sub_item("dm-dt-append", crate::settings::text("追加到钉钉")).on_click(cx.listener(move |w, _, window, cx| w.dingtalk_push(&append_id, true, window, cx))))

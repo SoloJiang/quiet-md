@@ -89,7 +89,7 @@ Core 的不变量由 `crates/core/src/editor/fuzz_tests.rs` 在每一步随机�
 | `docxml.rs` | DocxXML 解析与序列化；`to_inline` 构造行内对象 |
 | `store.rs` | 文档库读写、索引恢复、回收站、设置；`image_path` |
 | `paste.rs` | HTML / Markdown → block（粘贴和导入共用；飞书 `lark-doc`、钉钉 `data-clipboard-cangjie` / `<template>`、钉钉 `:::` 高亮块） |
-| `dingtalk.rs` | 钉钉文档 OpenAPI（应用凭证 accessToken、blocks 拉取、Markdown 覆写 / 追加 / 新建）；默认关闭，靠环境变量启用 |
+| `dingtalk.rs` | 钉钉文档 OpenAPI（用户 OAuth + 本机回调；AppKey/AppSecret 仅作 client 凭证；blocks 拉取、Markdown 覆写 / 追加 / 新建）；默认关闭，靠环境变量 +「连接钉钉账号」启用 |
 | `markdown.rs` | 导出 Markdown |
 | `lang.rs` | 代码语言表 |
 | `palette.rs` | 文字色、背景色、高亮块色板（RGBA，不依赖 GPUI；`theme.rs` 转成 GPUI 颜色） |

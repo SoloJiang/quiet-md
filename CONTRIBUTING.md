@@ -36,7 +36,7 @@ FDL_FUZZ_SEEDS=2000 cargo test --release random_edits   # 更多随机编辑，�
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 分层、编辑流程、不变量、撤销、渲染、模块地图 |
 | [docs/FORMAT.md](docs/FORMAT.md) | 文档库目录、索引恢复、DocxXML 读写规则和本地扩展 |
-| [docs/DINGTALK.md](docs/DINGTALK.md) | 钉钉文档导入 / 粘贴 / 导出（文件与剪贴板，无云端同步） |
+| [docs/DINGTALK.md](docs/DINGTALK.md) | 钉钉文档导入 / 粘贴 / 用户 OAuth OpenAPI |
 | [docs/THEMES.md](docs/THEMES.md) | 文档主题的 CSS 写法：选择器、属性、命名颜色 |
 | [AGENTS.md](AGENTS.md) | 代码风格、提交前检查、测试约定 |
 

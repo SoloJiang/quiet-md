@@ -1,8 +1,8 @@
 //! 导入 / 导出: 下载为 → PDF / Markdown (with the 导出 Markdown 设置
 //! dialog), 打印, and 导入为文档 (主页's 上传, the app menu): local Markdown,
 //! DocxXML, or HTML (钉钉文档 clipboard dumps / saved pages) picked straight
-//! away. Optional 钉钉文档 OpenAPI pull/push when env credentials are set
-//! (see docs/DINGTALK.md). The Word / PDF settings and 打印选项 only choose
+//! away. Optional 钉钉文档 OpenAPI pull/push via **用户 OAuth** (see
+//! docs/DINGTALK.md). The Word / PDF settings and 打印选项 only choose
 //! what happens to comments, so they are left out.
 
 use crate::app::Workspace;
@@ -191,13 +191,28 @@ impl Workspace {
         self.row_menu = None;
     }
 
-    fn dingtalk_client_or_toast(&mut self, cx: &mut Context<Self>) -> Option<crate::dingtalk::Client> {
-        match crate::dingtalk::credentials_from_env() {
-            Some(c) => Some(crate::dingtalk::Client::new(c)),
+    fn dingtalk_app_or_toast(&mut self, cx: &mut Context<Self>) -> Option<crate::dingtalk::OAuthApp> {
+        match crate::dingtalk::oauth_app_from_env() {
+            Some(a) => Some(a),
             None => {
                 self.show_toast_kind(
                     ToastKind::Error,
-                    crate::settings::text("未配置钉钉 OpenAPI：请设置 QUIET_MD_DINGTALK_APP_KEY / APP_SECRET / OPERATOR_ID（见 docs/DINGTALK.md）"),
+                    crate::settings::text("未配置钉钉 OAuth：请设置 QUIET_MD_DINGTALK_APP_KEY / APP_SECRET（见 docs/DINGTALK.md）"),
+                    cx,
+                );
+                None
+            }
+        }
+    }
+
+    fn dingtalk_client_or_toast(&mut self, cx: &mut Context<Self>) -> Option<crate::dingtalk::Client> {
+        let Some(app) = self.dingtalk_app_or_toast(cx) else { return None };
+        match crate::dingtalk::Client::from_store(app) {
+            Ok(c) => Some(c),
+            Err(e) => {
+                self.show_toast_kind(
+                    ToastKind::Error,
+                    &format!("{}: {e}", crate::settings::text("请先连接钉钉账号")),
                     cx,
                 );
                 None
@@ -219,7 +234,37 @@ impl Workspace {
         }
     }
 
-    /// 钉钉文档 → 本地笔记（OpenAPI pull）.
+    /// 系统浏览器打开钉钉授权页，本机 loopback 收回 authCode。
+    pub fn dingtalk_connect(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.close_menus();
+        let Some(app) = self.dingtalk_app_or_toast(cx) else { return };
+        self.show_toast_kind(ToastKind::Info, crate::settings::text("正在打开钉钉授权…"), cx);
+        cx.notify();
+        match crate::dingtalk::interactive_login(&app) {
+            Ok(session) => {
+                let who = session.nick.as_deref().unwrap_or(&session.union_id);
+                self.show_toast_kind(
+                    ToastKind::Info,
+                    &format!("{}（{who}）", crate::settings::text("已连接钉钉账号")),
+                    cx,
+                );
+            }
+            Err(e) => self.show_toast_kind(ToastKind::Error, &format!("{}: {e}", crate::settings::text("连接钉钉失败")), cx),
+        }
+        cx.notify();
+    }
+
+    /// Clear stored user tokens.
+    pub fn dingtalk_disconnect(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.close_menus();
+        match crate::dingtalk::clear_session(&crate::dingtalk::oauth_store_path()) {
+            Ok(()) => self.show_toast_kind(ToastKind::Info, crate::settings::text("已断开钉钉账号"), cx),
+            Err(e) => self.show_toast_kind(ToastKind::Error, &format!("{}: {e}", crate::settings::text("断开失败")), cx),
+        }
+        cx.notify();
+    }
+
+    /// 钉钉文档 → 本地笔记（OpenAPI pull，用户 token）.
     pub fn dingtalk_pull(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_menus();
         let Some(client) = self.dingtalk_client_or_toast(cx) else { return };

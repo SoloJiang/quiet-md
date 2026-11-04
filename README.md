@@ -87,7 +87,7 @@
 
 - **编辑**：标题、有序 / 无序列表、待办、引用、代码块（语法高亮）、LaTeX 公式、表格（可合并单元格）、高亮块、分栏、图片、附件、封面。支持 `#`、`-`、`[]`、`>` 等 Markdown 快捷输入和 `/` 斜杠菜单。
 - **整理**：文档树、置顶、收藏、全文搜索、回收站。
-- **导入导出**：导入 Markdown、HTML 和飞书 DocxXML；导出 Markdown、PDF，也可以直接打印。从飞书、钉钉文档或网页粘贴时保留结构。钉钉文档还支持可选的 OpenAPI 拉取 / 推送（需企业内部应用凭证），见 [docs/DINGTALK.md](docs/DINGTALK.md)。
+- **导入导出**：导入 Markdown、HTML 和飞书 DocxXML；导出 Markdown、PDF，也可以直接打印。从飞书、钉钉文档或网页粘贴时保留结构。钉钉文档还支持可选的 OpenAPI 拉取 / 推送（**用户 OAuth**；AppKey/AppSecret 仅作 OAuth 客户端凭证），见 [docs/DINGTALK.md](docs/DINGTALK.md)。
 - **快捷键**：按 `⌘ /` 查看全部快捷键，每一个都能改。
 - **主题**：内置 Craft、飞书、Notion、Obsidian 四套风格，也可以用 CSS 自己写，见 [docs/THEMES.md](docs/THEMES.md)。
 
