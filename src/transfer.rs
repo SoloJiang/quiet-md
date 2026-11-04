@@ -1,8 +1,9 @@
 //! 导入 / 导出: 下载为 → PDF / Markdown (with the 导出 Markdown 设置
 //! dialog), 打印, and 导入为文档 (主页's 上传, the app menu): local Markdown,
 //! DocxXML, or HTML (钉钉文档 clipboard dumps / saved pages) picked straight
-//! away. The Word / PDF settings and 打印选项 only choose what happens to
-//! comments, so they are left out.
+//! away. Optional 钉钉文档 OpenAPI pull/push when env credentials are set
+//! (see docs/DINGTALK.md). The Word / PDF settings and 打印选项 only choose
+//! what happens to comments, so they are left out.
 
 use crate::app::Workspace;
 use crate::settings::display_title;
@@ -172,11 +173,111 @@ pub fn html_document(path: &Path) -> std::io::Result<Document> {
     Ok(Document { title: RichText::plain(stem), icon: None, cover: None, blocks })
 }
 
+/// Document id/URL for OpenAPI: `QUIET_MD_DINGTALK_DOC`, else clipboard text.
+fn resolve_dingtalk_doc(cx: &App) -> Option<String> {
+    if let Some(d) = crate::dingtalk::doc_from_env() {
+        return Some(d);
+    }
+    let text = cx.read_from_clipboard().and_then(|i| i.text())?;
+    let t = text.trim();
+    crate::dingtalk::parse_doc_key(t).ok()?;
+    Some(t.to_string())
+}
+
 impl Workspace {
     fn close_menus(&mut self) {
         self.doc_menu = false;
         self.doc_sub = None;
         self.row_menu = None;
+    }
+
+    fn dingtalk_client_or_toast(&mut self, cx: &mut Context<Self>) -> Option<crate::dingtalk::Client> {
+        match crate::dingtalk::credentials_from_env() {
+            Some(c) => Some(crate::dingtalk::Client::new(c)),
+            None => {
+                self.show_toast_kind(
+                    ToastKind::Error,
+                    crate::settings::text("未配置钉钉 OpenAPI：请设置 QUIET_MD_DINGTALK_APP_KEY / APP_SECRET / OPERATOR_ID（见 docs/DINGTALK.md）"),
+                    cx,
+                );
+                None
+            }
+        }
+    }
+
+    fn dingtalk_doc_or_toast(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        match resolve_dingtalk_doc(cx) {
+            Some(d) => Some(d),
+            None => {
+                self.show_toast_kind(
+                    ToastKind::Error,
+                    crate::settings::text("请先复制钉钉文档链接，或设置 QUIET_MD_DINGTALK_DOC"),
+                    cx,
+                );
+                None
+            }
+        }
+    }
+
+    /// 钉钉文档 → 本地笔记（OpenAPI pull）.
+    pub fn dingtalk_pull(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_menus();
+        let Some(client) = self.dingtalk_client_or_toast(cx) else { return };
+        let Some(doc_ref) = self.dingtalk_doc_or_toast(cx) else { return };
+        if !self.save_before(cx, move |w, window, cx| w.dingtalk_pull(window, cx)) {
+            return;
+        }
+        self.show_toast_kind(ToastKind::Info, crate::settings::text("正在从钉钉拉取…"), cx);
+        let result = client.pull_markdown(&doc_ref).map(|p| crate::dingtalk::document_from_pulled(&p));
+        match result.and_then(|doc| self.store.create_from(&doc)) {
+            Ok(id) => {
+                self.entries = self.store.list();
+                self.sort();
+                self.open(&id, window, cx);
+                self.show_toast_kind(ToastKind::Info, crate::settings::text("已从钉钉拉取"), cx);
+            }
+            Err(e) => self.show_toast_kind(ToastKind::Error, &format!("{}: {e}", crate::settings::text("拉取失败")), cx),
+        }
+        cx.notify();
+    }
+
+    /// 本地笔记 → 钉钉文档（overwrite or append）.
+    pub fn dingtalk_push(&mut self, id: &str, append: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        self.close_menus();
+        let Some(client) = self.dingtalk_client_or_toast(cx) else { return };
+        let Some(doc_ref) = self.dingtalk_doc_or_toast(cx) else { return };
+        let Some(doc) = self.doc_of(id, cx) else { return };
+        let md = crate::markdown::export(&doc, &crate::markdown::Options { sub_pages: &[], assets: None }).text;
+        let result = if append { client.push_append(&doc_ref, &md) } else { client.push_overwrite(&doc_ref, &md) };
+        match result {
+            Ok(()) => self.show_toast_kind(
+                ToastKind::Info,
+                if append { crate::settings::text("已追加到钉钉文档") } else { crate::settings::text("已推送到钉钉文档（覆写）") },
+                cx,
+            ),
+            Err(e) => self.show_toast_kind(ToastKind::Error, &format!("{}: {e}", crate::settings::text("推送失败")), cx),
+        }
+        cx.notify();
+    }
+
+    /// Create a new 钉钉文档 in the configured workspace and push Markdown.
+    pub fn dingtalk_create_push(&mut self, id: &str, _window: &mut Window, cx: &mut Context<Self>) {
+        self.close_menus();
+        let Some(client) = self.dingtalk_client_or_toast(cx) else { return };
+        let Some(doc) = self.doc_of(id, cx) else { return };
+        let name = display_title(&doc.title.text);
+        let md = crate::markdown::export(&doc, &crate::markdown::Options { sub_pages: &[], assets: None }).text;
+        match client.create_and_push(&name, &md) {
+            Ok(created) => {
+                let msg = match created.url {
+                    Some(u) => format!("{}：{u}", crate::settings::text("已在钉钉新建文档")),
+                    None => format!("{}（{}）", crate::settings::text("已在钉钉新建文档"), created.doc_key),
+                };
+                self.show_toast_kind(ToastKind::Info, &msg, cx);
+            }
+            Err(e) => self.show_toast_kind(ToastKind::Error, &format!("{}: {e}", crate::settings::text("新建失败")), cx),
+        }
+        cx.notify();
     }
 
     /// Titles of `id`'s child pages, for its 子页面列表 blocks.

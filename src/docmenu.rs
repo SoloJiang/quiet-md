@@ -12,6 +12,8 @@ use gpui::{prelude::FluentBuilder, *};
 pub enum DocSub {
     Width,
     Download,
+    /// 钉钉文档 OpenAPI 拉取 / 推送.
+    DingTalk,
     /// 更多: 显示引用列表.
     More,
 }
@@ -199,6 +201,10 @@ impl Workspace {
                 menu_item("dm-download", "export", crate::settings::text("下载为"), true, sub == Some(DocSub::Download))
                     .on_hover(hover_sub(Some(DocSub::Download))),
             )
+            .child(
+                menu_item("dm-dingtalk", "export", crate::settings::text("钉钉文档"), true, sub == Some(DocSub::DingTalk))
+                    .on_hover(hover_sub(Some(DocSub::DingTalk))),
+            )
             .child(divider())
             .when(crate::printing::SUPPORTED, |d| d.child(
                 menu_item("dm-print", "printer", crate::settings::text("打印"), false, false)
@@ -265,8 +271,29 @@ impl Workspace {
                         .into_any_element()
                 },
             )),
+            // 钉钉文档 sits under 下载为 → one extra item before the next divider.
+            Some(DocSub::DingTalk) => Some((
+                item_top(7, 3) - 1. - PAD,
+                {
+                    let push_id = id.clone();
+                    let append_id = id.clone();
+                    let create_id = id.clone();
+                    popover()
+                        .id("dm-dingtalk-menu")
+                        .occlude()
+                        .w(px(180.))
+                        .px(px(5.))
+                        .py(px(PAD))
+                        .child(recorder())
+                        .child(sub_item("dm-dt-pull", crate::settings::text("拉取到本地")).on_click(cx.listener(|w, _, window, cx| w.dingtalk_pull(window, cx))))
+                        .child(sub_item("dm-dt-push", crate::settings::text("推送（覆写）")).on_click(cx.listener(move |w, _, window, cx| w.dingtalk_push(&push_id, false, window, cx))))
+                        .child(sub_item("dm-dt-append", crate::settings::text("追加到钉钉")).on_click(cx.listener(move |w, _, window, cx| w.dingtalk_push(&append_id, true, window, cx))))
+                        .child(sub_item("dm-dt-create", crate::settings::text("新建并推送")).on_click(cx.listener(move |w, _, window, cx| w.dingtalk_create_push(&create_id, window, cx))))
+                        .into_any_element()
+                },
+            )),
             Some(DocSub::More) => Some((
-                if crate::printing::SUPPORTED { item_top(9, 6) } else { item_top(8, 5) } - 1. - PAD,
+                if crate::printing::SUPPORTED { item_top(10, 6) } else { item_top(9, 5) } - 1. - PAD,
                 popover()
                     .id("dm-more-menu")
                     .occlude()
