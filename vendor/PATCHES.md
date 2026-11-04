@@ -23,7 +23,7 @@ diff -ru $R/taffy-0.9.0/src vendor/taffy/src
 | 5 | `text_system/line.rs` | `paint_rows` / `paint_background_rows`：按显式给出的每行顶部位置绘制 | 行内含公式或按钮时各行高度不同 |
 | 6 | `style.rs`、`styled.rs`、`taffy.rs` | `grid_col_widths(Vec<f32>)`：以像素给出网格列宽，覆盖 `grid_cols`；`repeat` 的字面量补上类型 | 表格列宽 |
 | 7 | `elements/list.rs` | `ListState::estimated_scroll_metrics` / `scroll_to_estimated_offset`：未量过的行按平均行高估算 | 长文档的滚动条和拖动滚动条 |
-| 8 | `platform.rs`、`platform/mac/platform.rs` | `PathPromptOptions.extensions`：限制 NSOpenPanel 可选的文件类型 | 导入对话框只列出 Markdown / 文本和 .xml 文件 |
+| 8 | `platform.rs`、`platform/mac/platform.rs` | `PathPromptOptions.extensions`：限制 NSOpenPanel 可选的文件类型 | 导入对话框按扩展名过滤可选文件（Markdown / 文本 / .xml / .html） |
 | 9 | `platform/mac/window.rs` | `mouseDownCanMoveWindow` 返回 NO，新增 `start_window_move`（延后执行 `performWindowDragWithEvent`） | 透明标题栏不再自己拖动窗口，也不再盖住应用按钮；应用自己标出可拖动区域 |
 | 10 | `platform/mac/metal_renderer.rs`、`window.rs`、`platform.rs` | `render_to_bgra` / `Window::render_offscreen`：把场景渲染到离屏纹理再读回；`Window::needs_draw` | 脚本截图和录屏，窗口被遮挡或锁屏时也能用（devtools） |
 | 11 | `window.rs` | `DispatchEventResult` 改为 `pub`（`Window::dispatch_event` 的返回类型） | devtools 回放事件时调用 `dispatch_event` |

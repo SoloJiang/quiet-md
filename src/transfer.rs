@@ -1,7 +1,8 @@
 //! 导入 / 导出: 下载为 → PDF / Markdown (with the 导出 Markdown 设置
-//! dialog), 打印, and 导入为文档 (主页's 上传, the app menu): local Markdown
-//! or DocxXML files picked straight away. The Word / PDF settings and
-//! 打印选项 only choose what happens to comments, so they are left out.
+//! dialog), 打印, and 导入为文档 (主页's 上传, the app menu): local Markdown,
+//! DocxXML, or HTML (钉钉文档 clipboard dumps / saved pages) picked straight
+//! away. The Word / PDF settings and 打印选项 only choose what happens to
+//! comments, so they are left out.
 
 use crate::app::Workspace;
 use crate::settings::display_title;
@@ -20,6 +21,7 @@ pub struct ExportMd {
 }
 
 const MARKDOWN_EXTS: [&str; 4] = ["md", "markdown", "mark", "txt"];
+const HTML_EXTS: [&str; 2] = ["html", "htm"];
 
 fn downloads() -> PathBuf {
     std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Downloads")).unwrap_or_default()
@@ -38,11 +40,11 @@ fn save_path(name: &str, cx: &mut App) -> impl std::future::Future<Output = Opti
     }
 }
 
-/// Markdown and DocxXML files to import: the system open panel, or a
+/// Markdown, DocxXML, and HTML files to import: the system open panel, or a
 /// scripted answer.
 fn open_paths(cx: &mut App) -> impl std::future::Future<Output = Option<Vec<PathBuf>>> + use<> {
     let picked = crate::devtools::take_pick();
-    let extensions = Some(MARKDOWN_EXTS.iter().chain(&["xml"]).map(|e| SharedString::from(*e)).collect());
+    let extensions = Some(MARKDOWN_EXTS.iter().chain(&["xml"]).chain(HTML_EXTS.iter()).map(|e| SharedString::from(*e)).collect());
     let prompt = picked.is_none().then(|| cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: true, prompt: Some(crate::settings::text("导入").into()), extensions }));
     async move {
         match prompt {
@@ -142,6 +144,24 @@ pub fn markdown_document(path: &Path) -> std::io::Result<Document> {
     if blocks.first().is_some_and(|b| matches!(b.kind, BlockKind::Heading { level: 1, .. }) && b.text.text.trim() == stem) {
         blocks.remove(0);
     }
+    if let Some(dir) = path.parent() {
+        resolve_images(&mut blocks, dir);
+    }
+    crate::editor::image::localize_pasted_images(&mut blocks);
+    if blocks.is_empty() {
+        blocks.push(Block::text(""));
+    }
+    Ok(Document { title: RichText::plain(stem), icon: None, cover: None, blocks })
+}
+
+/// An HTML file as a page (钉钉文档 clipboard dumps, saved pages, web HTML).
+/// Uses the same converter as paste; titled after the file stem.
+pub fn html_document(path: &Path) -> std::io::Result<Document> {
+    let bytes = std::fs::read(path)?;
+    let text = String::from_utf8_lossy(&bytes);
+    let text = text.trim_start_matches('\u{feff}');
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default().trim().to_string();
+    let mut blocks = crate::paste::html_to_blocks(text);
     if let Some(dir) = path.parent() {
         resolve_images(&mut blocks, dir);
     }
@@ -266,8 +286,8 @@ impl Workspace {
         .detach();
     }
 
-    /// 上传 / 导入为文档: pick Markdown or DocxXML files, each becoming a
-    /// document; the last one opens.
+    /// 上传 / 导入为文档: pick Markdown, DocxXML, or HTML files, each becoming
+    /// a document; the last one opens.
     pub fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_menus();
         cx.notify();
@@ -290,6 +310,7 @@ impl Workspace {
             let ext = p.extension().and_then(|s| s.to_str()).unwrap_or_default().to_ascii_lowercase();
             let made = match ext.as_str() {
                 e if MARKDOWN_EXTS.contains(&e) => markdown_document(p).map_err(anyhow::Error::from).and_then(|doc| self.store.create_from(&doc)),
+                e if HTML_EXTS.contains(&e) => html_document(p).map_err(anyhow::Error::from).and_then(|doc| self.store.create_from(&doc)),
                 "xml" => self.store.import(p),
                 _ => Err(anyhow::anyhow!("文件格式不支持")),
             };
@@ -393,7 +414,7 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
-    use super::{BlockKind, markdown_document, percent_decode};
+    use super::{BlockKind, html_document, markdown_document, percent_decode};
 
     #[test]
     fn imports_markdown_file() {
@@ -410,6 +431,26 @@ mod tests {
         assert!(matches!(&doc.blocks[3].kind, BlockKind::Image { src, .. } if src == "https://e.com/a.png"));
         assert!(matches!(doc.blocks[4].kind, BlockKind::Heading { level: 2, .. }));
         assert_eq!(percent_decode("a%20b%E5%9B%BE.png"), "a b图.png");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn imports_dingtalk_style_html_file() {
+        let dir = std::env::temp_dir().join(format!("fdl-import-html-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("钉钉摘录.html");
+        std::fs::write(
+            &path,
+            r#"<!doctype html><html><body>
+<div data-clipboard-cangjie="{}">
+<template><h1>标题</h1><p>一段 <strong>粗体</strong></p></template>
+</div></body></html>"#,
+        )
+        .unwrap();
+        let doc = html_document(&path).unwrap();
+        assert_eq!(doc.title.text, "钉钉摘录");
+        assert!(doc.blocks.iter().any(|b| matches!(b.kind, BlockKind::Heading { level: 1, .. }) && b.text.text.contains("标题")));
+        assert!(doc.blocks.iter().any(|b| b.text.text.contains("粗体")));
         let _ = std::fs::remove_dir_all(dir);
     }
 }

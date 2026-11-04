@@ -13,7 +13,9 @@ pub fn html_to_blocks(html: &str) -> Vec<Block> {
     let mut out = vec![];
     container(&root, &Ctx::default(), &mut out);
     // Markdown typed into another app's rich text still converts (inline).
-    if !has_class(&dom.document, "lark-doc") {
+    // Feishu (`lark-doc`) and 钉钉文档 (`data-clipboard-cangjie`) already carry
+    // structure in the HTML; re-parsing would double-apply emphasis.
+    if !has_class(&dom.document, "lark-doc") && !has_attr(&dom.document, "data-clipboard-cangjie") {
         reparse_markdown(&mut out);
     }
     out
@@ -25,6 +27,10 @@ fn has_class(n: &Handle, class: &str) -> bool {
 
 fn has_own_class(n: &Handle, class: &str) -> bool {
     attr(n, "class").is_some_and(|c| c.split_whitespace().any(|c| c == class))
+}
+
+fn has_attr(n: &Handle, key: &str) -> bool {
+    attr(n, key).is_some() || n.children.borrow().iter().any(|c| has_attr(c, key))
 }
 
 /// A callout: colours snap to the nearest swatch, the emoji id
@@ -87,8 +93,12 @@ fn reparse_markdown(blocks: &mut [Block]) {
 }
 
 /// Content that never becomes document text.
+///
+/// `<template>` is deliberately *not* skipped: 钉钉文档 wraps clipboard HTML
+/// (lists, marks, colours) in `<template>` payloads. Children are walked like
+/// a transparent container; nested `script` / etc. remain skipped.
 const SKIP: &[&str] = &[
-    "head", "title", "meta", "link", "style", "script", "noscript", "template", "iframe", "object", "embed", "video", "audio",
+    "head", "title", "meta", "link", "style", "script", "noscript", "iframe", "object", "embed", "video", "audio",
     "canvas", "svg", "math", "button", "select", "option", "textarea", "input", "map", "area", "source", "track",
 ];
 
@@ -115,6 +125,14 @@ fn tag(n: &Handle) -> Option<String> {
 fn attr(n: &Handle, key: &str) -> Option<String> {
     match &n.data {
         NodeData::Element { attrs, .. } => attrs.borrow().iter().find(|a| &*a.name.local == key).map(|a| a.value.to_string()),
+        _ => None,
+    }
+}
+
+/// html5ever keeps `<template>` children on `template_contents`, not `children`.
+fn template_contents(n: &Handle) -> Option<Handle> {
+    match &n.data {
+        NodeData::Element { template_contents, .. } => template_contents.borrow().clone(),
         _ => None,
     }
 }
@@ -278,6 +296,15 @@ fn node(n: &Handle, ctx: &Ctx, out: &mut Vec<Block>, para: &mut RichText) {
                 bctx.align = Some(a);
             }
             match t.as_str() {
+                // 钉钉文档 clipboard wraps structure in `<template>`; contents
+                // live on the element's template fragment, not `children`.
+                "template" => {
+                    if let Some(frag) = template_contents(n) {
+                        for ch in frag.children.borrow().iter() {
+                            node(ch, &bctx, out, para);
+                        }
+                    }
+                }
                 "br" => {
                     trim_end_spaces(para);
                     para.push("\n", ctx.marks.clone());
@@ -974,6 +1001,45 @@ fn md_blocks(lines: &[&str], off: Off) -> Vec<Block> {
             }
             continue;
         }
+        // 钉钉文档 Markdown export: `::: … :::` callout / 高亮块 fences.
+        if let Some((same, rest)) = callout_fence(body).filter(|_| !off.code_divider) {
+            if let Some(text) = same {
+                let kids = if text.is_empty() {
+                    vec![Block::text("")]
+                } else {
+                    md_blocks(&[text], Off { code_divider: true, ..off })
+                };
+                out.push(Block::new(
+                    BlockKind::Callout { emoji: "💡".into(), bg: None, border: None, text_color: None },
+                    RichText::default(),
+                ).with_children(kids));
+                i += 1;
+                continue;
+            }
+            let mut sub = vec![];
+            if !rest.is_empty() {
+                sub.push(rest);
+            }
+            let mut j = i + 1;
+            while j < lines.len() {
+                if callout_close(lines[j].trim()) {
+                    break;
+                }
+                sub.push(lines[j]);
+                j += 1;
+            }
+            let kids = if sub.is_empty() {
+                vec![Block::text("")]
+            } else {
+                md_blocks(&sub, Off { code_divider: true, ..off })
+            };
+            out.push(Block::new(
+                BlockKind::Callout { emoji: "💡".into(), bg: None, border: None, text_color: None },
+                RichText::default(),
+            ).with_children(kids));
+            i = if j < lines.len() && callout_close(lines[j].trim()) { j + 1 } else { j };
+            continue;
+        }
         if let Some((t, n)) = pipe_table(&lines[i..]) {
             out.push(t);
             i += n;
@@ -1014,6 +1080,30 @@ fn quote_line(s: &str) -> Option<&str> {
         return Some(r.strip_prefix(' ').unwrap_or(r));
     }
     s.strip_prefix("》 ")
+}
+
+/// DingTalk Docs Markdown 高亮块: opening `:::`, optional same-line close.
+/// Returns `Some((Some(inner), _))` for `::: text :::`, or `Some((None, rest))`
+/// for a multi-line fence opener (`:::` / `::: tip`).
+fn callout_fence(s: &str) -> Option<(Option<&str>, &str)> {
+    let t = s.trim();
+    if !t.starts_with(":::") {
+        return None;
+    }
+    let after = t[3..].trim_start();
+    if after.is_empty() {
+        return Some((None, ""));
+    }
+    if let Some(inner) = after.strip_suffix(":::").map(str::trim) {
+        return Some((Some(inner), ""));
+    }
+    // Opening fence with a label (`::: tip`) — label is ignored; body follows.
+    Some((None, ""))
+}
+
+fn callout_close(s: &str) -> bool {
+    let t = s.trim();
+    t == ":::" || (t.starts_with(":::") && t[3..].trim().is_empty())
 }
 
 fn table_cells(line: &str) -> Vec<String> {
@@ -1186,6 +1276,22 @@ pub fn md_inline(s: &str) -> RichText {
                     i += url.len();
                     continue;
                 }
+            }
+        }
+        // 钉钉文档 / common MD: `==highlight==` → light-yellow background.
+        if c == '='
+            && rest.starts_with("==")
+            && let Some(end) = find_run(&rest[2..], "==", b'=')
+        {
+            let inner = &rest[2..2 + end];
+            if !inner.is_empty() && !inner.starts_with(char::is_whitespace) && !inner.ends_with(char::is_whitespace) {
+                flush(&mut plain, &mut out);
+                let mut t = md_inline(inner);
+                let len = t.len();
+                t.update_marks(0..len, |m| m.bg_color = Some(ColorName("light-yellow".into())));
+                out.append(&t);
+                i += 2 + end + 2;
+                continue;
             }
         }
         // Emphasis.
@@ -1372,5 +1478,52 @@ mod tests {
         let x = xml("<table><tr><th>a</th><th>b</th></tr><tr><td colspan=2>c</td></tr></table>");
         assert!(x.contains("<table"), "{x}");
         assert!(x.contains("colspan=\"2\""), "{x}");
+    }
+
+    /// 钉钉文档 clipboard: marks live inside `<template>`; `data-clipboard-cangjie`
+    /// marks the payload (no real credentials — fixture only).
+    #[test]
+    fn dingtalk_template_clipboard() {
+        let x = xml(
+            r#"<div data-clipboard-cangjie="{&quot;type&quot;:&quot;doc&quot;}">
+<template><p>hello <strong>bold</strong> and <em>it</em></p>
+<ul><li>one</li><li>two</li></ul></template>
+</div>"#,
+        );
+        assert!(x.contains("<p>hello <b>bold</b> and <em>it</em></p>"), "{x}");
+        assert!(x.contains("<li>one"), "{x}");
+        assert!(x.contains("<li>two"), "{x}");
+    }
+
+    #[test]
+    fn dingtalk_markdown_callout_and_highlight() {
+        let x = docxml::serialize(&Document {
+            title: RichText::default(),
+            blocks: super::markdown_to_blocks(
+                "# 标题\n\n正文 ==高亮== 字\n\n::: 注意事项:::\n\n:::\n多行高亮\n:::\n",
+                Default::default(),
+            ),
+            ..Default::default()
+        });
+        assert!(x.contains("<h1>标题</h1>"), "{x}");
+        assert!(x.contains("background-color=\"light-yellow\""), "{x}");
+        assert!(x.contains("<callout"), "{x}");
+        assert!(x.contains("注意事项"), "{x}");
+        assert!(x.contains("多行高亮"), "{x}");
+    }
+
+    #[test]
+    fn dingtalk_sample_fixture_imports() {
+        let md = include_str!("../tests/fixtures/dingtalk-sample.md");
+        let x = docxml::serialize(&Document {
+            title: RichText::default(),
+            blocks: super::markdown_to_blocks(md, super::Off { file: true, ..Default::default() }),
+            ..Default::default()
+        });
+        assert!(x.contains("<h1>钉钉文档样例</h1>"), "{x}");
+        assert!(x.contains("<callout"), "{x}");
+        assert!(x.contains("background-color=\"light-yellow\""), "{x}");
+        assert!(x.contains("<checkbox"), "{x}");
+        assert!(x.contains("<table"), "{x}");
     }
 }
