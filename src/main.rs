@@ -39,7 +39,7 @@ mod trash;
 mod tree;
 mod ui;
 
-use fdl_core::{docxml, lang, markdown, model, palette, paste, store, time};
+use fdl_core::{dingtalk, docxml, lang, markdown, model, palette, paste, store, time};
 
 use gpui::*;
 
